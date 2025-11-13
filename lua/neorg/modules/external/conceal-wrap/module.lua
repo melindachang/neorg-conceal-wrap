@@ -111,10 +111,8 @@ module.public.format = function()
       if #next_group > 0 then
         table.insert(groups, next_group)
       end
-      next_group = (t == 'header' or t == 'list') and { ln } or {}
-      if t == 'header' then
-        table.insert(groups, { ln })
-      end
+      next_group = t == 'list' and { ln } or {}
+      -- don't wrap headers
     end
   end
   if #next_group > 0 then
