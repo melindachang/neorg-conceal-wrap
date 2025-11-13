@@ -86,10 +86,6 @@ module.public.format = function()
     return 1
   end
   local buf = vim.api.nvim_get_current_buf()
-  local tree, query = module.private.ts_parse_buf(buf)
-  if not tree or not query then
-    return 1
-  end
 
   local current_row = vim.v.lnum - 1
 
@@ -118,7 +114,7 @@ module.public.format = function()
       if #next_group > 0 then
         table.insert(groups, next_group)
       end
-      next_group = (t == 'list') and { ln } or {} -- omit headers, blanks
+      next_group = t == 'list' and { ln } or {} -- omit headers, blanks
     end
   end
 
@@ -128,39 +124,30 @@ module.public.format = function()
 
   -- format group-by-group
   local offset = 0
+  local parser = vim.treesitter.get_parser()
+  local query = vim.treesitter.query.get('norg', 'highlights')
+  if not parser or not query then
+    return 1
+  end
+
   for _, group in ipairs(groups) do
     module.private.join_lines(
       buf,
       group[1] + offset,
       group[#group] + 1 + offset
     )
+
+    local tree = parser:parse()[1]
+    if not tree then
+      return 1
+    end
+
     local new_line_len =
       module.private.format_joined_line(buf, tree, query, group[1] + offset)
     offset = offset + (new_line_len - #group)
   end
 
   return 0
-end
-
----@param buf integer
----@return TSTree?, vim.treesitter.Query?
-module.private.ts_parse_buf = function(buf)
-  local parser = vim.treesitter.get_parser(buf)
-  if not parser then
-    return
-  end
-
-  local tree = parser:parse()[1]
-  if not tree then
-    return
-  end
-
-  local query = vim.treesitter.query.get('norg', 'highlights')
-  if not query then
-    return
-  end
-
-  return tree, query
 end
 
 ---@param line string
