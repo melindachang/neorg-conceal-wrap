@@ -8,6 +8,8 @@
     - Avoid joining list items
 --]]
 
+---@alias BlockType 'header' | 'list' | 'blank' | 'text'
+
 local neorg = require('neorg.core')
 local modules, log = neorg.modules, neorg.log
 
@@ -86,6 +88,11 @@ module.public.format = function()
     return 1
   end
   local buf = vim.api.nvim_get_current_buf()
+  local tree, query = module.private.ts_parse_buf(buf)
+  if not tree or not query then
+    return 1
+  end
+
   local current_row = vim.v.lnum - 1
 
   -- group the lines by header/list items, etc..
@@ -99,27 +106,17 @@ module.public.format = function()
   )
   for i, line in ipairs(lines) do
     local ln = i + current_row - 1
-    if line:match('^%s*%*+%s') then
-      -- this is a header, it gets its own group
-      if #next_group > 0 then
-        table.insert(groups, next_group)
-      end
-      table.insert(groups, { ln })
-      next_group = {}
-    elseif line:match('^%s*[%-%~]+%s+') then
-      -- this is a list item, don't join the group above, but allow lines below to join
-      if #next_group > 0 then
-        table.insert(groups, next_group)
-      end
-      next_group = { ln }
-    elseif line:match('^%s*$') then
-      -- this is a blank line, break the group
-      if #next_group > 0 then
-        table.insert(groups, next_group)
-      end
-      next_group = {}
-    else
+    local t = module.private.get_line_type(line)
+    if not t == 'text' then
       table.insert(next_group, ln)
+    else
+      if #next_group > 0 then
+        table.insert(groups, next_group)
+      end
+      next_group = (t == 'header' or t == 'list') and { ln } or {}
+      if t == 'header' then
+        table.insert(groups, { ln })
+      end
     end
   end
   if #next_group > 0 then
@@ -137,7 +134,7 @@ module.public.format = function()
       group[#group] + 1 + offset
     )
     local new_line_len =
-      module.private.format_joined_line(buf, group[1] + offset)
+      module.private.format_joined_line(buf, tree, query, group[1] + offset)
     offset = offset + (new_line_len - #group)
     ::continue::
   end
@@ -145,11 +142,48 @@ module.public.format = function()
   return 0
 end
 
+---@param buf integer
+---@return TSTree?, vim.treesitter.Query?
+module.private.ts_parse_buf = function(buf)
+  local parser = vim.treesitter.get_parser(buf)
+  if not parser then
+    return
+  end
+
+  local tree = parser:parse()[1]
+  if not tree then
+    return
+  end
+
+  local query = vim.treesitter.query.get('norg', 'highlights')
+  if not query then
+    return
+  end
+
+  return tree, query
+end
+
+---@param line string
+---@return BlockType
+module.private.get_line_type = function(line)
+  if line:match('^%s*%*+%s') then
+    return 'header'
+  elseif line:match('^%s*[%-%~]+%s+') then
+    return 'list'
+  elseif line:match('^%s*$') then
+    return 'blank'
+  end
+
+  return 'text'
+end
+
 ---Format a single line that's been joined
 ---@param buf integer
+---@param tree TSTree
+---@param query vim.treesitter.Query
 ---@param line_idx integer 0 based line index
 ---@return integer lines the integer of lines the formatted text takes up
-module.private.format_joined_line = function(buf, line_idx)
+module.private.format_joined_line = function(buf, tree, query, line_idx)
   local ok, err = pcall(function()
     local line =
       vim.api.nvim_buf_get_lines(buf, line_idx, line_idx + 1, false)[1]
@@ -174,7 +208,8 @@ module.private.format_joined_line = function(buf, line_idx)
       print('extra_indent:', extra_indent)
     end
 
-    local concealed = module.private.get_concealed_chars(buf, line_idx)
+    local concealed =
+      module.private.get_concealed_chars(buf, tree, query, line_idx)
 
     local new_lines = {}
     local col_index = 0
@@ -238,25 +273,12 @@ end
 
 ---Compute the (in)visible characters in a line
 ---@param buf integer
+---@param tree TSTree
+---@param query vim.treesitter.Query
 ---@param line_idx integer 0 based line integer
 ---@return boolean[]
-module.private.get_concealed_chars = function(buf, line_idx)
+module.private.get_concealed_chars = function(buf, tree, query, line_idx)
   local concealed = {}
-
-  local parser = vim.treesitter.get_parser(buf)
-  if not parser then
-    return {}
-  end
-
-  local tree = parser:parse()[1]
-  if not tree then
-    return {}
-  end
-
-  local query = vim.treesitter.query.get('norg', 'highlights')
-  if not query then
-    return {}
-  end
 
   for id, node in query:iter_captures(tree:root(), buf, line_idx, line_idx + 1) do
     if query.captures[id] == 'conceal' then
