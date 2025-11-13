@@ -8,7 +8,7 @@
     - Avoid joining list items
 --]]
 
----@alias BlockType 'header' | 'list' | 'blank' | 'text'
+---@alias BlockType 'header' | 'list' | 'blank' | 'text' | 'tag_start' | 'tag_end'
 
 local neorg = require('neorg.core')
 local modules, log = neorg.modules, neorg.log
@@ -93,9 +93,10 @@ module.public.format = function()
 
   local current_row = vim.v.lnum - 1
 
-  -- group the lines by header/list items, etc..
+  -- group lines into blocks; handle accordingly
   local groups = {}
   local next_group = {}
+  local inside_tag_block = false
   local lines = vim.api.nvim_buf_get_lines(
     buf,
     current_row,
@@ -105,16 +106,22 @@ module.public.format = function()
   for i, line in ipairs(lines) do
     local ln = i + current_row - 1
     local t = module.private.get_line_type(line)
-    if t == 'text' then
+
+    if t == 'tag_start' then
+      inside_tag_block = true
+    elseif t == 'tag_end' then
+      inside_tag_block = false
+    elseif inside_tag_block then -- do nothing
+    elseif t == 'text' then
       table.insert(next_group, ln)
     else
       if #next_group > 0 then
         table.insert(groups, next_group)
       end
-      next_group = t == 'list' and { ln } or {}
-      -- don't wrap headers
+      next_group = (t == 'list') and { ln } or {} -- omit headers, blanks
     end
   end
+
   if #next_group > 0 then
     table.insert(groups, next_group)
   end
@@ -165,6 +172,12 @@ module.private.get_line_type = function(line)
     return 'list'
   elseif line:match('^%s*$') then
     return 'blank'
+  elseif line:match('^%s*@[%w%.]+') then
+    if line:match('^%s*@end%s*$') then
+      return 'tag_end'
+    else
+      return 'tag_start'
+    end
   end
 
   return 'text'
