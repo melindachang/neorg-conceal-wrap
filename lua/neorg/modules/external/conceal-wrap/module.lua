@@ -24,12 +24,12 @@ end
 module.load = function()
   local ns = vim.api.nvim_create_augroup('neorg-conceal-wrap', { clear = true })
 
-  module.private.break_at = vim
-    .iter(vim.split(vim.o.breakat, ''))
-    :filter(function(x)
-      return not vim.tbl_contains(module.config.private.no_break_at, x)
-    end)
-    :totable()
+  module.private.break_at = {}
+  for _, ch in ipairs(vim.split(vim.o.breakat, '')) do
+    if not vim.tbl_contains(module.config.private.no_break_at, ch) then
+      module.private.break_at[ch] = true
+    end
+  end
 
   vim.api.nvim_create_autocmd('BufEnter', {
     desc = 'Set the format expression on norg buffers',
@@ -107,7 +107,7 @@ module.public.format = function()
   for i, line in ipairs(lines) do
     local ln = i + current_row - 1
     local t = module.private.get_line_type(line)
-    if not t == 'text' then
+    if t == 'text' then
       table.insert(next_group, ln)
     else
       if #next_group > 0 then
@@ -123,11 +123,9 @@ module.public.format = function()
     table.insert(groups, next_group)
   end
 
+  -- format group-by-group
   local offset = 0
   for _, group in ipairs(groups) do
-    if #group == 0 then
-      goto continue
-    end
     module.private.join_lines(
       buf,
       group[1] + offset,
@@ -136,7 +134,6 @@ module.public.format = function()
     local new_line_len =
       module.private.format_joined_line(buf, tree, query, group[1] + offset)
     offset = offset + (new_line_len - #group)
-    ::continue::
   end
 
   return 0
@@ -233,9 +230,7 @@ module.private.format_joined_line = function(buf, tree, query, line_idx)
         end
 
         local char = line:sub(c + 1, c + 1)
-        if
-          vim.list_contains(module.private.break_at, char) or char:match('%s')
-        then
+        if module.private.break_at[char] or char:match('%s') then
           last_break = c
         end
       end
