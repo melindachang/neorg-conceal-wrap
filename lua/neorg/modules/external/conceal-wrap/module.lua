@@ -67,10 +67,8 @@ module.private.join_lines = function(buf, start, _end)
   local og_lines = vim.api.nvim_buf_get_lines(buf, start, _end, false)
   local joined = vim
     .iter(og_lines)
-    :map(function(x)
-      x = x:gsub('^%s+', '')
-      x = x:gsub('%s+$', '')
-      return x
+    :map(function(s)
+      return s:match('^%s*(.-)%s*$')
     end)
     :join(' ')
   vim.api.nvim_buf_set_lines(buf, start, _end, false, { joined })
@@ -181,14 +179,13 @@ end
 ---@param line_idx integer 0 based line index
 ---@return integer lines the integer of lines the formatted text takes up
 module.private.format_joined_line = function(buf, tree, query, line_idx)
-  local ok, err = pcall(function()
+  local ok, result = pcall(function()
     local line =
       vim.api.nvim_buf_get_lines(buf, line_idx, line_idx + 1, false)[1]
     if not line or line == '' then
       return 1
     end
 
-    -- ---kinda like a byte index, It's just how far we are in the string of text.
     local width_limit = vim.bo.textwidth
     if width_limit == 0 then
       width_limit = 80 -- this is the value the built-in formatter defaults to when tw=0
@@ -199,10 +196,8 @@ module.private.format_joined_line = function(buf, tree, query, line_idx)
     local indent = tonumber(vim.fn.eval(vim.bo.indentexpr)) or 0
     local extra_indent = 0
     local match = line:match('^%s*([%-%~]+%s+)')
-    print('match:', match)
     if match then
-      extra_indent = #match + 1
-      print('extra_indent:', extra_indent)
+      extra_indent = #match
     end
 
     local concealed =
@@ -235,14 +230,9 @@ module.private.format_joined_line = function(buf, tree, query, line_idx)
         end
       end
 
-      local split_at
-      if visible_count <= width then
-        split_at = end_col
-      elseif last_break then
-        split_at = last_break
-      else
-        split_at = math.min(col_index + width - 1, end_col)
-      end
+      local split_at = visible_count <= width and end_col
+        or last_break
+        or math.min(col_index + width - 1, end_col)
 
       local chunk = line:sub(col_index + 1, split_at + 1)
       chunk = (' '):rep(applied_indent) .. chunk:gsub('^%s+', '')
@@ -261,9 +251,10 @@ module.private.format_joined_line = function(buf, tree, query, line_idx)
     return #new_lines
   end)
   if not ok then
-    log.error(err)
+    log.error(result)
+    return 1
   end
-  return err
+  return result
 end
 
 ---Compute the (in)visible characters in a line
