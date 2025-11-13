@@ -16,34 +16,34 @@ local modules, log = neorg.modules, neorg.log
 local module = modules.create('external.conceal-wrap')
 
 module.setup = function()
-    return {
-        success = true,
-    }
+  return {
+    success = true,
+  }
 end
 
 module.load = function()
-    local ns = vim.api.nvim_create_augroup('neorg-conceal-wrap', { clear = true })
+  local ns = vim.api.nvim_create_augroup('neorg-conceal-wrap', { clear = true })
 
-    module.private.break_at = {}
-    for _, ch in ipairs(vim.split(vim.o.breakat, '')) do
-        if not vim.tbl_contains(module.config.private.no_break_at, ch) then
-            module.private.break_at[ch] = true
-        end
+  module.private.break_at = {}
+  for _, ch in ipairs(vim.split(vim.o.breakat, '')) do
+    if not vim.tbl_contains(module.config.private.no_break_at, ch) then
+      module.private.break_at[ch] = true
     end
+  end
 
-    vim.api.nvim_create_autocmd('BufEnter', {
-        desc = 'Set the format expression on norg buffers',
-        pattern = '*.norg',
-        group = ns,
-        callback = function(ev)
-            -- set the format expression for the buffer.
-            vim.api.nvim_set_option_value(
-                'formatexpr',
-                "v:lua.require'neorg.modules.external.conceal-wrap.module'.public.format()",
-                { buf = ev.buf }
-            )
-        end,
-    })
+  vim.api.nvim_create_autocmd('BufEnter', {
+    desc = 'Set the format expression on norg buffers',
+    pattern = '*.norg',
+    group = ns,
+    callback = function(ev)
+      -- set the format expression for the buffer.
+      vim.api.nvim_set_option_value(
+        'formatexpr',
+        "v:lua.require'neorg.modules.external.conceal-wrap.module'.public.format()",
+        { buf = ev.buf }
+      )
+    end,
+  })
 end
 
 module.config.public = {}
@@ -64,99 +64,110 @@ module.config.private.no_break_at = { '.', '/', ',', '!', '-', '*', ':' }
 ---@param start integer 0 based start
 ---@param _end integer 0 based exclusive end
 module.private.join_lines = function(buf, start, _end)
-    local og_lines = vim.api.nvim_buf_get_lines(buf, start, _end, false)
-    local joined = vim.iter(og_lines)
-        :map(function(s)
-            return s:match('^%s*(.-)%s*$')
-        end)
-        :join(' ')
-    vim.api.nvim_buf_set_lines(buf, start, _end, false, { joined })
+  local og_lines = vim.api.nvim_buf_get_lines(buf, start, _end, false)
+  local joined = vim
+    .iter(og_lines)
+    :map(function(s)
+      return s:match('^%s*(.-)%s*$')
+    end)
+    :join(' ')
+  vim.api.nvim_buf_set_lines(buf, start, _end, false, { joined })
 end
 
 ---Function to be used as `:h 'formatexpr'` which will hard wrap text in such a way that lines will
 ---be `textwidth` long when conceal is active
 ---@return number
 module.public.format = function()
-    if vim.api.nvim_get_mode().mode == 'i' then
-        -- Returning 1 will tell nvim to fallback to the normal format method (which is capable of
-        -- handling insert mode much better than we can currently)
-        -- TODO: I think the issue might be that we remove blank spaces from the end when in insert
-        -- mode, which causes problems
-        return 1
-    end
-    local buf = vim.api.nvim_get_current_buf()
+  if vim.api.nvim_get_mode().mode == 'i' then
+    -- Returning 1 will tell nvim to fallback to the normal format method (which is capable of
+    -- handling insert mode much better than we can currently)
+    -- TODO: I think the issue might be that we remove blank spaces from the end when in insert
+    -- mode, which causes problems
+    return 1
+  end
+  local buf = vim.api.nvim_get_current_buf()
 
-    local current_row = vim.v.lnum - 1
+  local current_row = vim.v.lnum - 1
 
-    -- group lines into blocks; handle accordingly
-    local groups = {}
-    local next_group = {}
-    local inside_tag_block = false
-    local lines = vim.api.nvim_buf_get_lines(buf, current_row, current_row + vim.v.count, true)
-    for i, line in ipairs(lines) do
-        local ln = i + current_row - 1
-        local t = module.private.get_line_type(line)
+  -- group lines into blocks; handle accordingly
+  local groups = {}
+  local next_group = {}
+  local inside_tag_block = false
+  local lines = vim.api.nvim_buf_get_lines(
+    buf,
+    current_row,
+    current_row + vim.v.count,
+    true
+  )
+  for i, line in ipairs(lines) do
+    local ln = i + current_row - 1
+    local t = module.private.get_line_type(line)
 
-        if t == 'tag_start' then
-            inside_tag_block = true
-        elseif t == 'tag_end' then
-            inside_tag_block = false
-        elseif inside_tag_block then -- do nothing
-        elseif t == 'text' then
-            table.insert(next_group, ln)
-        else
-            if #next_group > 0 then
-                table.insert(groups, next_group)
-            end
-            next_group = t == 'list' and { ln } or {} -- omit headers, blanks
-        end
-    end
-
-    if #next_group > 0 then
+    if t == 'tag_start' then
+      inside_tag_block = true
+    elseif t == 'tag_end' then
+      inside_tag_block = false
+    elseif inside_tag_block then -- do nothing
+    elseif t == 'text' then
+      table.insert(next_group, ln)
+    else
+      if #next_group > 0 then
         table.insert(groups, next_group)
+      end
+      next_group = t == 'list' and { ln } or {} -- omit headers, blanks
+    end
+  end
+
+  if #next_group > 0 then
+    table.insert(groups, next_group)
+  end
+
+  -- format group-by-group
+  local offset = 0
+  local parser = vim.treesitter.get_parser()
+  local query = vim.treesitter.query.get('norg', 'highlights')
+  if not parser or not query then
+    return 1
+  end
+
+  for _, group in ipairs(groups) do
+    module.private.join_lines(
+      buf,
+      group[1] + offset,
+      group[#group] + 1 + offset
+    )
+
+    local tree = parser:parse()[1]
+    if not tree then
+      return 1
     end
 
-    -- format group-by-group
-    local offset = 0
-    local parser = vim.treesitter.get_parser()
-    local query = vim.treesitter.query.get('norg', 'highlights')
-    if not parser or not query then
-        return 1
-    end
+    local new_line_len =
+      module.private.format_joined_line(buf, tree, query, group[1] + offset)
+    offset = offset + (new_line_len - #group)
+  end
 
-    for _, group in ipairs(groups) do
-        module.private.join_lines(buf, group[1] + offset, group[#group] + 1 + offset)
-
-        local tree = parser:parse()[1]
-        if not tree then
-            return 1
-        end
-
-        local new_line_len = module.private.format_joined_line(buf, tree, query, group[1] + offset)
-        offset = offset + (new_line_len - #group)
-    end
-
-    return 0
+  return 0
 end
 
 ---@param line string
 ---@return BlockType
 module.private.get_line_type = function(line)
-    if line:match('^%s*%*+%s') then
-        return 'header'
-    elseif line:match('^%s*[%-%~]+%s+') then
-        return 'list'
-    elseif line:match('^%s*$') then
-        return 'blank'
-    elseif line:match('^%s*@[%w%.]+') then
-        if line:match('^%s*@end%s*$') then
-            return 'tag_end'
-        else
-            return 'tag_start'
-        end
+  if line:match('^%s*%*+%s') then
+    return 'header'
+  elseif line:match('^%s*[%-%~]+%s+') then
+    return 'list'
+  elseif line:match('^%s*$') then
+    return 'blank'
+  elseif line:match('^%s*@[%w%.]+') then
+    if line:match('^%s*@end%s*$') then
+      return 'tag_end'
+    else
+      return 'tag_start'
     end
+  end
 
-    return 'text'
+  return 'text'
 end
 
 ---Format a single line that's been joined
@@ -166,78 +177,82 @@ end
 ---@param line_idx integer 0 based line index
 ---@return integer lines the integer of lines the formatted text takes up
 module.private.format_joined_line = function(buf, tree, query, line_idx)
-    local ok, result = pcall(function()
-        local line = vim.api.nvim_buf_get_lines(buf, line_idx, line_idx + 1, false)[1]
-        if not line or line == '' then
-            return 1
-        end
-
-        local width_limit = vim.bo.textwidth
-        if width_limit == 0 then
-            width_limit = 80 -- this is the value the built-in formatter defaults to when tw=0
-        end
-
-        -- account for breakindent
-        vim.v.lnum = line_idx + 1
-        local indent = tonumber(vim.fn.eval(vim.bo.indentexpr)) or 0
-        local extra_indent = 0
-        local match = line:match('^%s*([%-%~]+%s+)')
-        if match then
-            extra_indent = #match
-        end
-
-        local concealed = module.private.get_concealed_chars(buf, tree, query, line_idx)
-
-        local new_lines = {}
-        local col_index = 0
-        local first_line = true
-        while col_index < #line do
-            local applied_indent = first_line and indent or (indent + extra_indent)
-            first_line = false
-
-            local width = math.max(width_limit - applied_indent, 5)
-            local visible_count = 0
-            local last_break
-            local end_col = #line - 1
-
-            for c = col_index, end_col do
-                if not concealed[c] then
-                    visible_count = visible_count + 1
-                end
-
-                if visible_count > width then
-                    break
-                end
-
-                local char = line:sub(c + 1, c + 1)
-                if module.private.break_at[char] or char:match('%s') then
-                    last_break = c
-                end
-            end
-
-            local split_at = visible_count <= width and end_col
-                or last_break
-                or math.min(col_index + width - 1, end_col)
-
-            local chunk = line:sub(col_index + 1, split_at + 1)
-            chunk = (' '):rep(applied_indent) .. chunk:gsub('^%s+', '')
-            chunk = chunk:gsub('%s+$', '')
-            table.insert(new_lines, chunk)
-
-            col_index = split_at + 1
-            while col_index < #line and line:sub(col_index + 1, col_index + 1):match('%s') do
-                col_index = col_index + 1
-            end
-        end
-
-        vim.api.nvim_buf_set_lines(buf, line_idx, line_idx + 1, false, new_lines)
-        return #new_lines
-    end)
-    if not ok then
-        log.error(result)
-        return 1
+  local ok, result = pcall(function()
+    local line =
+      vim.api.nvim_buf_get_lines(buf, line_idx, line_idx + 1, false)[1]
+    if not line or line == '' then
+      return 1
     end
-    return result
+
+    local width_limit = vim.bo.textwidth
+    if width_limit == 0 then
+      width_limit = 80 -- this is the value the built-in formatter defaults to when tw=0
+    end
+
+    -- account for breakindent
+    vim.v.lnum = line_idx + 1
+    local indent = tonumber(vim.fn.eval(vim.bo.indentexpr)) or 0
+    local extra_indent = 0
+    local match = line:match('^%s*([%-%~]+%s+)')
+    if match then
+      extra_indent = #match
+    end
+
+    local concealed =
+      module.private.get_concealed_chars(buf, tree, query, line_idx)
+
+    local new_lines = {}
+    local col_index = 0
+    local first_line = true
+    while col_index < #line do
+      local applied_indent = first_line and indent or (indent + extra_indent)
+      first_line = false
+
+      local width = math.max(width_limit - applied_indent, 5)
+      local visible_count = 0
+      local last_break
+      local end_col = #line - 1
+
+      for c = col_index, end_col do
+        if not concealed[c] then
+          visible_count = visible_count + 1
+        end
+
+        if visible_count > width then
+          break
+        end
+
+        local char = line:sub(c + 1, c + 1)
+        if module.private.break_at[char] or char:match('%s') then
+          last_break = c
+        end
+      end
+
+      local split_at = visible_count <= width and end_col
+        or last_break
+        or math.min(col_index + width - 1, end_col)
+
+      local chunk = line:sub(col_index + 1, split_at + 1)
+      chunk = (' '):rep(applied_indent) .. chunk:gsub('^%s+', '')
+      chunk = chunk:gsub('%s+$', '')
+      table.insert(new_lines, chunk)
+
+      col_index = split_at + 1
+      while
+        col_index < #line and line:sub(col_index + 1, col_index + 1):match('%s')
+      do
+        col_index = col_index + 1
+      end
+    end
+
+    vim.api.nvim_buf_set_lines(buf, line_idx, line_idx + 1, false, new_lines)
+    return #new_lines
+  end)
+  if not ok then
+    log.error(result)
+    return 1
+  end
+  return result
 end
 
 ---Compute the (in)visible characters in a line
@@ -247,18 +262,18 @@ end
 ---@param line_idx integer 0 based line integer
 ---@return boolean[]
 module.private.get_concealed_chars = function(buf, tree, query, line_idx)
-    local concealed = {}
+  local concealed = {}
 
-    for id, node in query:iter_captures(tree:root(), buf, line_idx, line_idx + 1) do
-        if query.captures[id] == 'conceal' then
-            local _, start_col, _, end_col = node:range()
-            for c = start_col, end_col - 1 do
-                concealed[c] = true
-            end
-        end
+  for id, node in query:iter_captures(tree:root(), buf, line_idx, line_idx + 1) do
+    if query.captures[id] == 'conceal' then
+      local _, start_col, _, end_col = node:range()
+      for c = start_col, end_col - 1 do
+        concealed[c] = true
+      end
     end
+  end
 
-    return concealed
+  return concealed
 end
 
 return module
