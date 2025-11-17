@@ -24,13 +24,6 @@ end
 module.load = function()
   local ns = vim.api.nvim_create_augroup('neorg-conceal-wrap', { clear = true })
 
-  module.private.break_at = {}
-  for _, ch in ipairs(vim.split(vim.o.breakat, '')) do
-    if not vim.tbl_contains(module.config.private.no_break_at, ch) then
-      module.private.break_at[ch] = true
-    end
-  end
-
   vim.api.nvim_create_autocmd('BufEnter', {
     desc = 'Set the format expression on norg buffers',
     pattern = '*.norg',
@@ -49,14 +42,6 @@ end
 module.config.public = {}
 
 module.config.private = {}
-
----Chars that we remove from break-at when wrapping lines. Break-at is global, and we don't want to
----mess with it. We will respect it until it starts to break syntax... Hmm. these are all valid in
----between words though, so maybe we could check that? Like this/that is fine, and doesn't start an
----italic section. so it would be okay to break there. Then we also have to consider when they touch
----against new lines though, that's annoying too. I think I will just remove them from breakat for
----now then.
-module.config.private.no_break_at = { '.', '/', ',', '!', '-', '*', ':' }
 
 ---join lines defined by the 0 index start and end into a single line. Lines are separated by single
 ---spaces.
@@ -223,7 +208,7 @@ module.private.format_joined_line = function(buf, tree, query, line_idx)
         end
 
         local char = line:sub(c + 1, c + 1)
-        if module.private.break_at[char] or char:match('%s') then
+        if vim.o.breakat[char] or char:match('%s') then
           last_break = c
         end
       end
